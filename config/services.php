@@ -35,4 +35,18 @@ return [
         ],
     ],
 
+    'gemini' => [
+        'api_key' => env('GEMINI_API_KEY'),
+        'model' => env('GEMINI_MODEL', 'gemini-2.5-flash'),
+        'fallback_models' => array_values(array_filter(array_map(
+            'trim',
+            explode(',', (string) env('GEMINI_FALLBACK_MODELS', 'gemini-2.5-flash-lite,gemini-1.5-flash'))
+        ))),
+        'timeout_seconds' => (int) env('GEMINI_TIMEOUT_SECONDS', 120),
+        'connect_timeout_seconds' => (int) env('GEMINI_CONNECT_TIMEOUT_SECONDS', 15),
+        'retry_times' => (int) env('GEMINI_RETRY_TIMES', 2),
+        'retry_sleep_ms' => (int) env('GEMINI_RETRY_SLEEP_MS', 1500),
+        'max_output_tokens' => (int) env('GEMINI_MAX_OUTPUT_TOKENS', 4096),
+    ],
+
 ];

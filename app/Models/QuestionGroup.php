@@ -14,11 +14,13 @@ class QuestionGroup extends Model
         'options_count',
         'cognitive_level',
         'with_explanation',
+        'with_image',
         'status',
     ];
 
     protected $casts = [
         'with_explanation' => 'boolean',
+        'with_image' => 'boolean',
     ];
 
     public function batch()

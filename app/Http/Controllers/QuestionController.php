@@ -6,8 +6,14 @@ use App\Models\Question;
 use App\Models\Batch;
 use App\Models\QuestionGroup;
 use App\Services\PromptBuilder;
+use App\Services\QuestionSvgRenderer;
+use Illuminate\Http\Client\ConnectionException;
+use Illuminate\Http\Client\RequestException;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Str;
+use Throwable;
 
 class QuestionController extends Controller
 {
@@ -17,8 +23,7 @@ class QuestionController extends Controller
     public function show(Batch $batch)
     {
         $batch->load('questionGroups.questions');
-        $batches = Batch::latest()->get();
-        return view('batches.show', compact('batch', 'batches'));
+        return view('batches.show', compact('batch'));
     }
 
     /* ----------------------------------------------------------------
@@ -33,6 +38,7 @@ class QuestionController extends Controller
             'options_count'    => 'required|integer|in:3,4,5',
             'cognitive_level'  => 'required|in:C1,C2,C3,C4,C5,C6',
             'with_explanation' => 'nullable|boolean',
+            'with_image'       => 'nullable|boolean',
         ]);
 
         $group = $batch->questionGroups()->create([
@@ -42,10 +48,11 @@ class QuestionController extends Controller
             'options_count'    => $validated['options_count'],
             'cognitive_level'  => $validated['cognitive_level'],
             'with_explanation' => $request->boolean('with_explanation'),
+            'with_image'       => $request->boolean('with_image'),
             'status'           => 'pending',
         ]);
 
-        return redirect()->route('questions.index', ['batch_id' => $batch->id])
+        return redirect()->route('batches.show', $batch->id)
                          ->with('success', "Kelompok \"{$group->name}\" berhasil ditambahkan.");
     }
 
@@ -55,7 +62,21 @@ class QuestionController extends Controller
     public function generateGroup(Request $request, QuestionGroup $group)
     {
         $batch  = $group->batch;
-        $apiKey = env('GEMINI_API_KEY');
+        $geminiConfig = config('services.gemini');
+        $apiKey = (string) ($geminiConfig['api_key'] ?? '');
+        $primaryModel = (string) ($geminiConfig['model'] ?? 'gemini-2.5-flash');
+        $fallbackModels = is_array($geminiConfig['fallback_models'] ?? null)
+            ? $geminiConfig['fallback_models']
+            : [];
+        $modelCandidates = array_values(array_unique(array_filter([
+            $primaryModel,
+            ...$fallbackModels,
+        ])));
+        $timeoutSeconds = max(30, (int) ($geminiConfig['timeout_seconds'] ?? 120));
+        $connectTimeoutSeconds = max(5, (int) ($geminiConfig['connect_timeout_seconds'] ?? 15));
+        $retryTimes = max(0, (int) ($geminiConfig['retry_times'] ?? 2));
+        $retrySleepMs = max(0, (int) ($geminiConfig['retry_sleep_ms'] ?? 1500));
+        $maxOutputTokens = max(1024, (int) ($geminiConfig['max_output_tokens'] ?? 4096));
 
         if (!$apiKey) {
             return back()->with('error', 'GEMINI_API_KEY belum diisi di .env');
@@ -78,16 +99,56 @@ class QuestionController extends Controller
         $promptData = $promptBuilder->build();
 
         try {
-            $response = Http::timeout(60)->withHeaders([
-                'X-goog-api-key' => $apiKey,
-                'Content-Type'   => 'application/json',
-            ])->post(
-                'https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent',
-                [
-                    'contents'        => [['parts' => [['text' => $promptData['full_prompt']]]]],
-                    'generationConfig' => ['temperature' => 0.7, 'maxOutputTokens' => 8192],
-                ]
-            );
+            $response = null;
+            $lastError = null;
+            $usedModel = $primaryModel;
+
+            foreach ($modelCandidates as $model) {
+                $usedModel = (string) $model;
+                $response = Http::connectTimeout($connectTimeoutSeconds)
+                    ->timeout($timeoutSeconds)
+                    ->retry(
+                        $retryTimes,
+                        $retrySleepMs,
+                        function (Throwable $exception, $request) {
+                            if ($exception instanceof ConnectionException) {
+                                return true;
+                            }
+
+                            if ($exception instanceof RequestException && $exception->response) {
+                                $status = $exception->response->status();
+                                return in_array($status, [408, 429, 500, 502, 503, 504], true);
+                            }
+
+                            return false;
+                        },
+                        false
+                    )
+                    ->withHeaders([
+                        'X-goog-api-key' => $apiKey,
+                        'Content-Type'   => 'application/json',
+                    ])
+                    ->post(
+                        'https://generativelanguage.googleapis.com/v1beta/models/' . $usedModel . ':generateContent',
+                        [
+                            'contents'        => [['parts' => [['text' => $promptData['full_prompt']]]]],
+                            'generationConfig' => ['temperature' => 0.7, 'maxOutputTokens' => $maxOutputTokens],
+                        ]
+                    );
+
+                if ($response->successful()) {
+                    break;
+                }
+
+                $lastError = (string) ($response->json()['error']['message'] ?? ('HTTP ' . $response->status()));
+                if (!$this->shouldTryNextGeminiModel($response->status(), $lastError)) {
+                    break;
+                }
+            }
+
+            if (!$response) {
+                return back()->with('error', 'Gemini API Error: Tidak ada respons dari server.');
+            }
 
             if ($response->successful()) {
                 $raw     = $response->json()['candidates'][0]['content']['parts'][0]['text'] ?? '{}';
@@ -99,10 +160,13 @@ class QuestionController extends Controller
                     $group->questions()->delete();
 
                     foreach ($soalData['soal'] as $item) {
-                        $safeTopic = preg_replace('/[^A-Za-z0-9 ]/', '', $batch->topic);
-                        $imageUrl  = "https://image.pollinations.ai/prompt/"
-                            . urlencode("educational illustration of {$safeTopic} school book style")
-                            . "?width=600&height=400&seed=" . rand(1, 99999) . "&nologo=true";
+                        if (
+                            !is_array($item) ||
+                            !isset($item['question_text']) ||
+                            !isset($item['correct_answer'])
+                        ) {
+                            continue;
+                        }
 
                         Question::create([
                             'batch_id'          => $batch->id,
@@ -116,24 +180,31 @@ class QuestionController extends Controller
                             'options'           => $item['options'] ?? null,
                             'correct_answer'    => $item['correct_answer'],
                             'explanation'       => $item['explanation'] ?? null,
-                            'image_url'         => $imageUrl,
+                            'image_url'         => $this->buildQuestionImageUrl($batch, $item, $group),
                         ]);
                     }
 
+                    $count = $group->questions()->count();
+
+                    if ($count < 1) {
+                        return back()->with('error', 'Format output AI tidak valid. Coba generate ulang.');
+                    }
+
                     $group->update(['status' => 'done']);
-                    $count = count($soalData['soal']);
                     return redirect()
-                        ->route('questions.index', ['batch_id' => $batch->id])
-                        ->with('success', "{$count} soal berhasil digenerate untuk kelompok \"{$group->name}\"!");
+                        ->route('batches.show', $batch->id)
+                        ->with('success', "{$count} soal berhasil digenerate untuk kelompok \"{$group->name}\"! (Model: {$usedModel})");
                 }
 
                 return back()->with('error', 'AI tidak menghasilkan soal. Coba lagi.');
             }
 
-            $errMsg = $response->json()['error']['message'] ?? 'Unknown error';
+            $errMsg = $lastError ?? ($response->json()['error']['message'] ?? ('HTTP ' . $response->status()));
             return back()->with('error', "Gemini API Error: {$errMsg}");
 
-        } catch (\Exception $e) {
+        } catch (ConnectionException $e) {
+            return back()->with('error', 'Koneksi ke Gemini timeout. Coba lagi, atau turunkan jumlah soal per group agar respons lebih cepat.');
+        } catch (Throwable $e) {
             return back()->with('error', 'Error: ' . $e->getMessage());
         }
     }
@@ -159,7 +230,7 @@ class QuestionController extends Controller
     {
         $batchId = $question->batch_id;
         $question->delete();
-        return redirect()->route('questions.index', ['batch_id' => $batchId])
+        return redirect()->route('batches.show', $batchId)
                          ->with('success', 'Soal berhasil dihapus.');
     }
 
@@ -170,7 +241,56 @@ class QuestionController extends Controller
     {
         $batchId = $group->batch_id;
         $group->delete(); // cascades to questions
-        return redirect()->route('questions.index', ['batch_id' => $batchId])
+        return redirect()->route('batches.show', $batchId)
                          ->with('success', 'Kelompok soal berhasil dihapus.');
+    }
+
+    private function buildQuestionImageUrl(Batch $batch, array $item, QuestionGroup $group): ?string
+    {
+        if (!$group->with_image) {
+            return null;
+        }
+
+        $questionText = trim((string) ($item['question_text'] ?? ''));
+        $questionText = preg_replace('/\s+/u', ' ', $questionText) ?? $questionText;
+        $questionSnippet = Str::limit($questionText, 110, '');
+
+        if ($questionSnippet === '') {
+            return null;
+        }
+
+        $svg = app(QuestionSvgRenderer::class)->render(
+            (string) $batch->subject,
+            (string) $batch->topic,
+            (string) $batch->school_level,
+            $questionSnippet
+        );
+
+        $hash = sha1(implode('|', [
+            (string) $batch->id,
+            (string) $group->id,
+            $questionSnippet,
+            (string) $group->type,
+            (string) $group->cognitive_level,
+        ]));
+
+        $path = 'question-visuals/' . $hash . '.svg';
+        Storage::disk('public')->put($path, $svg);
+
+        return Storage::disk('public')->url($path);
+    }
+
+    private function shouldTryNextGeminiModel(int $status, string $message): bool
+    {
+        if (in_array($status, [429, 500, 502, 503, 504], true)) {
+            return true;
+        }
+
+        $msg = Str::lower($message);
+
+        return str_contains($msg, 'high demand')
+            || str_contains($msg, 'resource_exhausted')
+            || str_contains($msg, 'temporarily unavailable')
+            || str_contains($msg, 'quota');
     }
 }

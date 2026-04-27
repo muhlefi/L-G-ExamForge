@@ -2,6 +2,7 @@
 
 use App\Http\Controllers\BatchController;
 use App\Http\Controllers\QuestionController;
+use App\Http\Controllers\StatisticsController;
 use Illuminate\Support\Facades\Route;
 
 // ── Batches (Sesi) ──────────────────────────────────────────────
@@ -9,6 +10,7 @@ Route::get('/',                  [BatchController::class,   'index'])  ->name('b
 Route::get('/batches/create',    [BatchController::class,   'create']) ->name('batches.create');
 Route::post('/batches',          [BatchController::class,   'store'])  ->name('batches.store');
 Route::get('/batches/{batch}',   [QuestionController::class,'show'])   ->name('batches.show');
+Route::get('/stats',             [StatisticsController::class, 'index'])->name('stats.index');
 
 // ── Question Groups ─────────────────────────────────────────────
 Route::post('/batches/{batch}/groups',  [QuestionController::class, 'storeGroup'])    ->name('groups.store');

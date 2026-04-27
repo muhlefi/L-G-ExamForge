@@ -263,6 +263,12 @@
                     Sertakan Pembahasan
                 </label>
             </div>
+            <div style="display:flex;align-items:flex-end;padding-bottom:.1rem;">
+                <label style="display:flex;align-items:center;gap:.5rem;cursor:pointer;font-size:.9rem;">
+                    <input type="checkbox" name="with_image" value="1" checked style="width:1.1rem;height:1.1rem;accent-color:var(--primary);">
+                    Generate Gambar Soal
+                </label>
+            </div>
         </div>
         <div style="margin-top:1.5rem;display:flex;justify-content:flex-end;">
             <button type="submit" class="btn btn-primary">+ Tambah Kelompok</button>
@@ -283,6 +289,9 @@
                     @if($group->type === 'pilgan')
                         <span class="pill" style="background:rgba(16,185,129,.08);color:#86efac;">{{ $group->options_count }} Opsi</span>
                     @endif
+                    <span class="pill" style="background:rgba(56,189,248,.12);color:#7dd3fc;">
+                        {{ $group->with_image ? 'Gambar ON' : 'Gambar OFF' }}
+                    </span>
                     <span class="pill {{ $group->status === 'done' ? 'pill-green' : 'pill-red' }}">
                         {{ $group->status === 'done' ? '✓ Done' : '○ Pending' }}
                     </span>
@@ -312,7 +321,7 @@
                         <div>
                             <div style="font-weight:600;font-size:1rem;line-height:1.5;">{{ $q->question_text }}</div>
                             @if($q->image_url)
-                                <img src="{{ $q->image_url }}" class="q-img" alt="Visual AI">
+                                <img src="{{ trim($q->image_url) }}" class="q-img" alt="Visual AI" loading="lazy" decoding="async" referrerpolicy="no-referrer">
                             @endif
                             @if($q->options)
                                 <div class="q-options-grid">
@@ -417,7 +426,7 @@
                     <div class="paper-q">
                         <div class="paper-q-text">{{ $qi + 1 }}. {{ $q->question_text }}</div>
                         @if($q->image_url)
-                            <img src="{{ $q->image_url }}" style="max-width:220px;display:block;margin:1rem 0;border:1px solid #ccc;filter:grayscale(100%);">
+                            <img src="{{ trim($q->image_url) }}" style="max-width:220px;display:block;margin:1rem 0;border:1px solid #ccc;filter:grayscale(100%);" loading="lazy" decoding="async" referrerpolicy="no-referrer">
                         @endif
                         @if($q->options)
                             <ul class="paper-options" style="list-style:none;">

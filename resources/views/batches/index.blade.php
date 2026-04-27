@@ -135,8 +135,7 @@
         <div class="batch-meta">
             <span class="meta-chip chip-indigo">{{ $batch->school_level }}</span>
             <span class="meta-chip chip-amber">{{ $batch->class_name }}</span>
-            @php $groupCount = $batch->questionGroups()->count(); @endphp
-            <span class="meta-chip chip-green">{{ $groupCount }} Kelompok</span>
+            <span class="meta-chip chip-green">{{ $batch->question_groups_count }} Kelompok</span>
         </div>
         <div class="batch-footer">
             <span>👤 {{ $batch->teacher_name }}</span>

@@ -354,7 +354,7 @@
                         <div>
                             <div style="font-weight:600;font-size:1rem;line-height:1.5;">{{ $q->question_text }}</div>
                             @if($q->image_url)
-                                <img src="{{ $q->image_url }}" class="q-img" alt="Visual AI">
+                                <img src="{{ trim($q->image_url) }}" class="q-img" alt="Visual AI" loading="lazy" decoding="async" referrerpolicy="no-referrer">
                             @endif
                             @if($q->options)
                                 <div class="q-options-grid">
@@ -465,7 +465,7 @@
                     <div class="paper-q">
                         <div class="paper-q-text">{{ $qi + 1 }}. {{ $q->question_text }}</div>
                         @if($q->image_url)
-                            <img src="{{ $q->image_url }}" style="max-width:220px;display:block;margin:1rem 0;border:1px solid #ccc;filter:grayscale(100%);">
+                            <img src="{{ trim($q->image_url) }}" style="max-width:220px;display:block;margin:1rem 0;border:1px solid #ccc;filter:grayscale(100%);" loading="lazy" decoding="async" referrerpolicy="no-referrer">
                         @endif
                         @if($q->options)
                             <ul class="paper-options" style="list-style:none;">

@@ -12,7 +12,11 @@ class BatchController extends Controller
      | ---------------------------------------------------------------*/
     public function index()
     {
-        $batches = Batch::latest()->get();
+        $batches = Batch::query()
+            ->withCount('questionGroups')
+            ->latest()
+            ->get();
+
         return view('batches.index', compact('batches'));
     }
 
